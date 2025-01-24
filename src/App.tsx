@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ethers } from 'ethers';
 import { notification } from 'antd';
+import BNBTransferForm from './components/BNBTransferForm';
+import TokenTransferForm from './components/TokenTransferForm';
 
 const ERC20_ABI = [
   {
     "constant": true,
     "inputs": [],
     "name": "name",
-    "outputs": [{"name": "", "type": "string"}],
+    "outputs": [{ "name": "", "type": "string" }],
     "payable": false,
     "stateMutability": "view",
     "type": "function"
@@ -16,7 +18,7 @@ const ERC20_ABI = [
     "constant": true,
     "inputs": [],
     "name": "symbol",
-    "outputs": [{"name": "", "type": "string"}],
+    "outputs": [{ "name": "", "type": "string" }],
     "payable": false,
     "stateMutability": "view",
     "type": "function"
@@ -25,16 +27,16 @@ const ERC20_ABI = [
     "constant": true,
     "inputs": [],
     "name": "decimals",
-    "outputs": [{"name": "", "type": "uint8"}],
+    "outputs": [{ "name": "", "type": "uint8" }],
     "payable": false,
     "stateMutability": "view",
     "type": "function"
-  },  
+  },
   {
     "constant": true,
-    "inputs": [{"name": "_owner", "type": "address"}],
+    "inputs": [{ "name": "_owner", "type": "address" }],
     "name": "balanceOf",
-    "outputs": [{"name": "balance", "type": "uint256"}],
+    "outputs": [{ "name": "balance", "type": "uint256" }],
     "payable": false,
     "stateMutability": "view",
     "type": "function"
@@ -46,7 +48,7 @@ const ERC20_ABI = [
       { "name": "_value", "type": "uint256" }
     ],
     "name": "transfer",
-    "outputs": [{"name": "", "type": "bool"}],
+    "outputs": [{ "name": "", "type": "bool" }],
     "payable": false,
     "stateMutability": "nonpayable",
     "type": "function"
@@ -83,97 +85,156 @@ const App = () => {
     tokenSymbol: 'TOKEN'
   });
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState<TransferFormData>({
-    to: '',
-    amount: ''
-  });
-  const [erc20TransferData, setErc20TransferData] = useState<TransferFormData>({
-    to: '',
-    amount: ''
-  });
-  const [activeTab, setActiveTab] = useState<'bnb' | 'token'>('bnb'); 
 
+  const [activeTab, setActiveTab] = useState<'bnb' | 'token'>('bnb');
 
+  useEffect(() => {
+    const savedWallet = localStorage.getItem('wallet');
+    if (savedWallet) {
+      setWallet(JSON.parse(savedWallet));
+    }
+  }, []);
+
+  const saveWalletState = (walletState: WalletState) => {
+    localStorage.setItem('wallet', JSON.stringify(walletState));
+  };
+
+  const clearWalletState = () => {
+    localStorage.removeItem('wallet');
+  };
   const getTokenBalance = async (address: string, provider: ethers.Provider) => {
     try {
       const tokenContract = new ethers.Contract(TOKEN_ADDRESS, ERC20_ABI, provider);
       // const tokenContract = new ethers.Contract(address, ERC20_ABI, provider);
-  
+
       const [balance, decimals, symbol] = await Promise.all([
         tokenContract.balanceOf(address),
-        tokenContract.decimals().catch(() => 18),  
-        tokenContract.symbol().catch(() => 'TOKEN') 
+        tokenContract.decimals().catch(() => 18),
+        tokenContract.symbol().catch(() => 'TOKEN')
       ]);
-  
+
       return {
         balance: ethers.formatUnits(balance, decimals),
         symbol
       };
     } catch (error) {
       console.error('Error getting token balance:', error);
-      return { 
-        balance: '0', 
+      return {
+        balance: '0',
         symbol: 'TOKEN'
       };
     }
   };
-  
+
+
 
   const connectWallet = async () => {
     try {
-      if (window.ethereum) {
-        await window.ethereum.request({ method: 'eth_requestAccounts' });
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const signer = await provider.getSigner();
-        const address = await signer.getAddress();
-        const balance = await provider.getBalance(address);
-        const { balance: tokenBalance, symbol: tokenSymbol } = await getTokenBalance(address, provider);
-  
-        setWallet({
-          address,
-          bnbBalance: ethers.formatEther(balance),
-          tokenBalance,
-          connected: true,
-          tokenSymbol
+      if (!window.ethereum) {
+        notification.error({
+          message: "No Binance Smart Chain wallet detected",
+          description: "Please install MetaMask or another compatible wallet.",
         });
-  
-        notification.success({
-          message: 'Connect wallet successfully',
-        });
+        return;
       }
+
+      const BSC_TESTNET_PARAMS = {
+        chainId: "0x61",
+        chainName: "BNB Chain Testnet",
+        nativeCurrency: {
+          name: "Testnet Binance Coin",
+          symbol: "BNB",
+          decimals: 18,
+        },
+        rpcUrls: ["https://data-seed-prebsc-1-s1.binance.org:8545/"],
+        blockExplorerUrls: ["https://testnet.bscscan.com"],
+      };
+
+      let provider = new ethers.BrowserProvider(window.ethereum);
+      const network = await provider.getNetwork();
+
+      if (network.chainId !== BigInt(BSC_TESTNET_PARAMS.chainId)) {
+        try {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [BSC_TESTNET_PARAMS],
+          });
+
+          provider = new ethers.BrowserProvider(window.ethereum);
+        } catch (error) {
+          notification.error({
+            message: "Failed to switch to BNB Chain Testnet",
+            description: "Please check your wallet settings and try again.",
+          });
+          return;
+        }
+      }
+
+      await window.ethereum.request({ method: "eth_requestAccounts" });
+
+      const signer = await provider.getSigner();
+      const address = await signer.getAddress();
+      const balance = await provider.getBalance(address);
+
+      const { balance: tokenBalance, symbol: tokenSymbol } = await getTokenBalance(address, provider);
+
+      const newWalletState: WalletState = {
+        address,
+        bnbBalance: ethers.formatEther(balance),
+        tokenBalance,
+        connected: true,
+        tokenSymbol,
+      };
+
+      setWallet(newWalletState);
+      saveWalletState(newWalletState);
+
+      notification.success({
+        message: "Wallet connected successfully on BNB Chain Testnet",
+      });
     } catch (error) {
+      console.error("Error connecting wallet:", error);
       notification.error({
-        message: 'Error Fetching Token Balance',
+        message: "Failed to connect wallet",
       });
     }
   };
-  
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
+  const handleDisconnect = () => {
+    setWallet({
+      address: '',
+      bnbBalance: '0',
+      tokenBalance: '0',
+      connected: false,
+      tokenSymbol: 'TOKEN',
     });
+    clearWalletState();
   };
 
-  const handleErc20TransferInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setErc20TransferData({
-      ...erc20TransferData,
-      [e.target.name]: e.target.value
-    });
-  };
+  // const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  //   setFormData({
+  //     ...formData,
+  //     [e.target.name]: e.target.value
+  //   });
+  // };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // const handleErc20TransferInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  //   setErc20TransferData({
+  //     ...erc20TransferData,
+  //     [e.target.name]: e.target.value
+  //   });
+  // };
+
+  const handleSubmitBNB = async (data: any) => {
+    // e.preventDefault();
     setLoading(true);
 
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
-      const amount = ethers.parseEther(formData.amount);
+      const amount = ethers.parseEther(data.amount);
 
       const tx = await signer.sendTransaction({
-        to: formData.to,
+        to: data.to,
         value: amount
       });
 
@@ -189,7 +250,7 @@ const App = () => {
       notification.success({
         message: 'Transfer BNB Success',
       });
-      setFormData({ to: '', amount: '' });
+      // reset();
     } catch (error) {
       notification.error({
         message: 'Transfer BNB Failed',
@@ -199,32 +260,31 @@ const App = () => {
     }
   };
 
-  const handleErc20TransferSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleErc20TransferSubmit = async (data: TransferFormData) => {
     setLoading(true);
-  
+
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const tokenContract = new ethers.Contract(TOKEN_ADDRESS, ERC20_ABI, signer);
-  
-      const amount = ethers.parseUnits(erc20TransferData.amount, 18); 
-  
-      const tx = await tokenContract.transfer(erc20TransferData.to, amount);
+
+      const amount = ethers.parseUnits(data.amount, 18);
+
+      const tx = await tokenContract.transfer(data.to, amount);
       await tx.wait();
-  
+
       // Cập nhật lại số dư token sau khi chuyển
       const { balance: tokenBalance } = await getTokenBalance(wallet.address, provider);
       setWallet(prev => ({
         ...prev,
         tokenBalance
       }));
-  
+
       notification.success({
         message: 'Transfer Token Success',
       });
-  
-      setErc20TransferData({ to: '', amount: '' });
+
+      // reset();
     } catch (error) {
       notification.error({
         message: 'Transfer Token Failed',
@@ -233,16 +293,17 @@ const App = () => {
       setLoading(false);
     }
   };
-  
+
   return (
-      <div className="w-full min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-800 p-8">
-        <nav className="flex items-center justify-between mb-16 w-full">
-          <div className="flex items-center">
-            <h1 className="text-2xl font-bold text-white">web3</h1>
-          </div>
+    <div className="w-full min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-800 p-8">
+      <nav className="flex items-center justify-between mb-16 w-full">
+        <div className="flex items-center">
+          <h1 className="text-2xl font-bold text-white">web3</h1>
+        </div>
+        {wallet.connected && (
           <div className="flex gap-8">
             <button
-              onClick={() => setActiveTab('bnb')} 
+              onClick={() => setActiveTab('bnb')}
               className="text-gray-300 hover:text-white"
             >
               Transfer BNB
@@ -253,129 +314,77 @@ const App = () => {
             >
               Transfer Token
             </button>
-          </div>
-        </nav>
-  
-        <div className="w-full mx-auto">
-          <div className=" justify-between items-center mb-16 w-full">
-            <div >
-              {!wallet.connected && (
-                <button
-                  onClick={connectWallet}
-                  className="text-center mx-auto flex bg-blue-600 text-white py-4 rounded-lg text-lg font-semibold w-32"
-                >
-                  Connect Wallet
-                </button>
-              )}
-            </div>
-  
-            {wallet.connected && (
-              <div className="w-full gap-12 grid grid-cols-2">
-                <div className="bg-gradient-to-br from-pink-400 via-purple-400 to-green-300 p-6 rounded-2xl mb-6">
-                  <div className="flex flex-col space-y-4">
-                    <div className="flex items-center">
-                      <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
-                        <span className="text-purple-600">⟠</span>
-                      </div>
-                      <span className="ml-2 text-white opacity-80">Address:</span>
-                    </div>
-                    <p className="text-white truncate">{wallet.address}</p>
-  
-                    <div className="flex items-center">
-                      <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
-                        <span className="text-purple-600">💰</span>
-                      </div>
-                      <span className="ml-2 text-white opacity-80">BNB Balance:</span>
-                    </div>
-                    <p className="text-white">{wallet.bnbBalance} BNB</p>
-  
-                    <div className="flex items-center">
-                      <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
-                        <span className="text-purple-600">🪙</span>
-                      </div>
-                      <span className="ml-2 text-white opacity-80">{wallet.tokenSymbol} Balance:</span>
-                    </div>
-                    <p className="text-white">{wallet.tokenBalance} {wallet.tokenSymbol}</p>
-                  </div>
-                </div>
-  
-                {activeTab === 'bnb' && (
-                  <form onSubmit={handleSubmit} className="bg-[rgba(255,255,255,0.1)] p-6 rounded-xl mb-4">
-                    <div className="mb-4">
-                      <label htmlFor="to" className="text-white">Recipient Address:</label>
-                      <input
-                        type="text"
-                        id="to"
-                        name="to"
-                        value={formData.to}
-                        onChange={handleInputChange}
-                        className="w-full mt-2 p-4 bg-gray-700 rounded-md text-white"
-                        required
-                      />
-                    </div>
-                    <div className="mb-4">
-                      <label htmlFor="amount" className="text-white">Amount:</label>
-                      <input
-                        type="number"
-                        id="amount"
-                        name="amount"
-                        value={formData.amount}
-                        onChange={handleInputChange}
-                        className="w-full mt-2 p-4 bg-gray-700 rounded-md text-white"
-                        required
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      className="w-full bg-blue-600 text-white py-4 rounded-lg text-lg font-semibold hover:bg-blue-700 transition-colors"
-                      disabled={loading}
-                    >
-                      {loading ? 'Sending BNB...' : 'Send BNB'}
-                    </button>
-                  </form>
-                )}
-  
-                {activeTab === 'token' && (
-                  <form onSubmit={handleErc20TransferSubmit} className="bg-[rgba(255,255,255,0.1)] p-6 rounded-xl mb-4">
-                    <div className="mb-4">
-                      <label htmlFor="to" className="text-white">Recipient Address:</label>
-                      <input
-                        type="text"
-                        id="to"
-                        name="to"
-                        value={erc20TransferData.to}
-                        onChange={handleErc20TransferInputChange}
-                        className="w-full mt-2 p-4 bg-gray-700 rounded-md text-white"
-                        required
-                      />
-                    </div>
-                    <div className="mb-4">
-                      <label htmlFor="amount" className="text-white">Amount:</label>
-                      <input
-                        type="number"
-                        id="amount"
-                        name="amount"
-                        value={erc20TransferData.amount}
-                        onChange={handleErc20TransferInputChange}
-                        className="w-full mt-2 p-4 bg-gray-700 rounded-md text-white"
-                        required
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      className="w-full bg-blue-600 text-white py-4 rounded-lg text-lg font-semibold hover:bg-blue-700 transition-colors"
-                      disabled={loading}
-                    >
-                      {loading ? 'Sending Tokens...' : 'Send Tokens'}
-                    </button>
-                  </form>
-                )}
-              </div>
+            <button onClick={handleDisconnect} className="bg-red-600 text-white py-2 px-4 rounded-lg">
+              Disconnect
+            </button>
+          </div>)}
+      </nav>
+
+      <div className="w-full mx-auto">
+        <div className=" justify-between items-center mb-16 w-full">
+          <div >
+            {!wallet.connected && (
+              <button
+                onClick={connectWallet}
+                className="text-center mx-auto flex bg-blue-600 text-white py-4 rounded-lg text-lg font-semibold w-32"
+              >
+                Connect Wallet
+              </button>
             )}
           </div>
+
+          {wallet.connected && (
+            <div className="w-full gap-12 grid grid-cols-2">
+              <div className="bg-gradient-to-br from-pink-400 via-purple-400 to-green-300 p-6 rounded-2xl mb-6">
+                <div className="flex flex-col space-y-4">
+                  <div className="flex items-center">
+                    <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
+                      <span className="text-purple-600">⟠</span>
+                    </div>
+                    <span className="ml-2 text-white opacity-80">Address:</span>
+                  </div>
+                  <p className="text-white truncate">{wallet.address}</p>
+
+                  <div className="flex items-center">
+                    <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
+                      <span className="text-purple-600">💰</span>
+                    </div>
+                    <span className="ml-2 text-white opacity-80">BNB Balance:</span>
+                  </div>
+                  <p className="text-white">{wallet.bnbBalance} BNB</p>
+
+                  <div className="flex items-center">
+                    <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center">
+                      <span className="text-purple-600">🪙</span>
+                    </div>
+                    <span className="ml-2 text-white opacity-80">{wallet.tokenSymbol} Balance:</span>
+                  </div>
+                  <p className="text-white">{wallet.tokenBalance} {wallet.tokenSymbol}</p>
+                </div>
+              </div>
+
+              {activeTab === 'bnb' && (
+                <BNBTransferForm
+                  walletBalance={wallet?.bnbBalance || '0'}
+                  onSubmit={handleSubmitBNB}
+                  loading={loading}
+                />
+              )}
+              {activeTab === 'token' && (
+                <TokenTransferForm
+                walletBalance={wallet.tokenBalance}
+                onSubmit={handleErc20TransferSubmit}
+                loading={loading}
+              />
+              )}
+
+            </div>
+
+          )}
         </div>
       </div>
-    );
-  };
-  
-  export default App;
+    </div>
+  );
+};
+
+export default App;
